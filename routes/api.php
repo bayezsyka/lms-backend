@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 | API Routes
 |--------------------------------------------------------------------------
-|
+| anjay
 | Semua route di sini otomatis memiliki prefix "/api".
 |
 */
