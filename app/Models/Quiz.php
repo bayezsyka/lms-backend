@@ -42,4 +42,12 @@ class Quiz extends Model
     {
         return $this->belongsTo(Section::class);
     }
+
+    /**
+     * Attempt- attempt quiz oleh mahasiswa.
+     */
+    public function attempts()
+    {
+        return $this->hasMany(QuizAttempt::class);
+    }
 }

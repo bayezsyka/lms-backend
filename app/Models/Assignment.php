@@ -42,17 +42,25 @@ class Assignment extends Model
     }
 
     /**
-     * Shortcut ke CourseInstance lewat Section (kalau nanti butuh).
+     * (Opsional) Akses CourseInstance lewat Section.
      */
     public function courseInstance()
     {
         return $this->hasOneThrough(
             CourseInstance::class,
             Section::class,
-            'id',                 // Foreign key di Section ke Assignment? (bukan, ini ke Assignment via section())
-            'id',                 // Foreign key di CourseInstance
-            'section_id',         // Local key di Assignment
-            'course_instance_id'  // Local key di Section
+            'id',                 // key pada Section
+            'id',                 // key pada CourseInstance
+            'section_id',         // key pada Assignment
+            'course_instance_id'  // key pada Section
         );
+    }
+
+    /**
+     * Submission-submission mahasiswa untuk assignment ini.
+     */
+    public function submissions()
+    {
+        return $this->hasMany(AssignmentSubmission::class);
     }
 }

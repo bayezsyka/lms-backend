@@ -3,54 +3,55 @@
 use App\Http\Controllers\Admin\CourseInstanceController;
 use App\Http\Controllers\Admin\CourseTemplateController;
 use App\Http\Controllers\Admin\UserController as AdminUserController;
+use App\Http\Controllers\AssignmentController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\MaterialController;
+use App\Http\Controllers\QuizController;
 use App\Http\Controllers\SectionController;
+use App\Http\Controllers\Student\AssignmentSubmissionController as StudentAssignmentSubmissionController;
+use App\Http\Controllers\Student\GradeController as StudentGradeController;
+use App\Http\Controllers\Student\QuizAttemptController as StudentQuizAttemptController;
+use App\Http\Controllers\Teacher\AssignmentSubmissionController as TeacherAssignmentSubmissionController;
 use App\Http\Controllers\Teacher\CourseInstanceController as TeacherCourseInstanceController;
+use App\Http\Controllers\Teacher\GradeController as TeacherGradeController;
+use App\Http\Controllers\Teacher\QuizAttemptController as TeacherQuizAttemptController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\MaterialController;
-use App\Http\Controllers\AssignmentController;
-use App\Http\Controllers\QuizController;
 
 /*
 |--------------------------------------------------------------------------
 | API Routes
 |--------------------------------------------------------------------------
-| Semua route di sini otomatis memiliki prefix "/api".
-| Definisi route di bawah ini akan melayani seluruh endpoint Backend LMS.
 */
 
-/*
-|--------------------------------------------------------------------------
-| PUBLIC / DEBUG ROUTES
-|--------------------------------------------------------------------------
-*/
-
-// Route ping sederhana: GET /api/ping
 Route::get('/ping', function () {
-    return response()->json([
-        'ok' => true,
-        'message' => 'LMS Backend is running.',
-    ]);
+    return response()->json(['message' => 'LMS Backend is running.']);
 });
 
 /*
 |--------------------------------------------------------------------------
 | AUTH ROUTES
 |--------------------------------------------------------------------------
-|
-| Prefix: /api/auth/*
-|
 */
 
 Route::prefix('auth')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
+    Route::post('/logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
+    Route::get('/me', [AuthController::class, 'me'])->middleware('auth:sanctum');
+    Route::post('/change-password', [AuthController::class, 'changePassword'])->middleware('auth:sanctum');
+});
 
-    Route::middleware('auth:sanctum')->group(function () {
-        Route::post('/logout', [AuthController::class, 'logout']);
-        Route::get('/me', [AuthController::class, 'me']);
-        Route::post('/change-password', [AuthController::class, 'changePassword']);
-    });
+/*
+|--------------------------------------------------------------------------
+| SANCTUM TEST ROUTE
+|--------------------------------------------------------------------------
+*/
+
+Route::middleware('auth:sanctum')->get('/sanctum-test', function (Request $request) {
+    return response()->json([
+        'message' => 'Sanctum token active.',
+        'user' => $request->user(),
+    ]);
 });
 
 /*
@@ -66,10 +67,7 @@ Route::prefix('auth')->group(function () {
 Route::prefix('admin')
     ->middleware(['auth:sanctum', 'role:superadmin'])
     ->group(function () {
-
-        /*
-         * Manajemen User
-         */
+        // User management
         Route::get('/users', [AdminUserController::class, 'index']);
         Route::post('/users', [AdminUserController::class, 'store']);
         Route::get('/users/{id}', [AdminUserController::class, 'show']);
@@ -77,34 +75,22 @@ Route::prefix('admin')
         Route::delete('/users/{id}', [AdminUserController::class, 'destroy']);
         Route::post('/users/{id}/reset-password', [AdminUserController::class, 'resetPassword']);
 
-        /*
-         * Course Templates
-         */
+        // Course templates
         Route::get('/course-templates', [CourseTemplateController::class, 'index']);
         Route::post('/course-templates', [CourseTemplateController::class, 'store']);
         Route::get('/course-templates/{id}', [CourseTemplateController::class, 'show']);
         Route::put('/course-templates/{id}', [CourseTemplateController::class, 'update']);
         Route::delete('/course-templates/{id}', [CourseTemplateController::class, 'destroy']);
 
-        /*
-         * Course Instances (kelas per semester)
-         */
-        // List semua kelas dengan filter (semester, status, lecturer_id)
+        // Course instances (kelas per semester)
         Route::get('/course-instances', [CourseInstanceController::class, 'index']);
-
-        // Buat kelas baru dari template
         Route::post('/course-instances', [CourseInstanceController::class, 'store']);
-
-        // Detail satu kelas
         Route::get('/course-instances/{id}', [CourseInstanceController::class, 'show']);
-
-        // Update info umum kelas
         Route::put('/course-instances/{id}', [CourseInstanceController::class, 'update']);
-
-        // Ubah status kelas (draft → active → finished) oleh Superadmin
         Route::post('/course-instances/{id}/status', [CourseInstanceController::class, 'updateStatus']);
+        Route::delete('/course-instances/{id}', [CourseInstanceController::class, 'destroy']);
 
-        // Manajemen mahasiswa di kelas
+        // Enrollment management
         Route::get('/course-instances/{id}/students', [CourseInstanceController::class, 'students']);
         Route::post('/course-instances/{id}/students', [CourseInstanceController::class, 'addStudent']);
         Route::delete('/course-instances/{id}/students/{studentId}', [CourseInstanceController::class, 'removeStudent']);
@@ -129,6 +115,46 @@ Route::prefix('teacher')
 
         // Dosen mengubah status kelas (draft ↔ active) miliknya
         Route::post('/course-instances/{id}/status', [TeacherCourseInstanceController::class, 'updateStatus']);
+
+        // Assignment submissions
+        Route::get('/assignments/{assignment}/submissions', [TeacherAssignmentSubmissionController::class, 'index']);
+        Route::post('/assignment-submissions/{submission}/grade', [TeacherAssignmentSubmissionController::class, 'grade']);
+
+        // Quiz attempts
+        Route::get('/quizzes/{quiz}/attempts', [TeacherQuizAttemptController::class, 'index']);
+
+        // Grades per kelas
+        Route::get('/course-instances/{courseInstance}/grades', [TeacherGradeController::class, 'courseGrades']);
+    });
+
+/*
+|--------------------------------------------------------------------------
+| STUDENT ROUTES
+|--------------------------------------------------------------------------
+|
+| Prefix: /api/student/*
+| Middleware: auth:sanctum + role:mahasiswa
+|
+*/
+
+Route::prefix('student')
+    ->middleware(['auth:sanctum', 'role:mahasiswa'])
+    ->group(function () {
+
+        // Mahasiswa submit / resubmit tugas
+        Route::post('/assignments/{assignment}/submit', [StudentAssignmentSubmissionController::class, 'submit']);
+
+        // Mahasiswa memulai quiz
+        Route::post('/quizzes/{quiz}/start', [StudentQuizAttemptController::class, 'start']);
+
+        // Mahasiswa submit jawaban quiz
+        Route::post('/quiz-attempts/{attempt}/submit', [StudentQuizAttemptController::class, 'submit']);
+
+        // Mahasiswa lihat hasil quiz (semua attempt untuk satu quiz)
+        Route::get('/quizzes/{quiz}/attempts', [StudentQuizAttemptController::class, 'myAttempts']);
+
+        // Mahasiswa lihat grades satu kelas
+        Route::get('/course-instances/{courseInstance}/grades', [StudentGradeController::class, 'courseGrades']);
     });
 
 /*
@@ -137,7 +163,7 @@ Route::prefix('teacher')
 |--------------------------------------------------------------------------
 |
 | Endpoint yang bisa diakses oleh superadmin dan dosen.
-| Termasuk CRUD Section di CourseInstance.
+| Termasuk CRUD Section, Material, Assignment, dan Quiz di CourseInstance.
 |
 */
 
@@ -147,10 +173,10 @@ Route::middleware(['auth:sanctum', 'role:superadmin,dosen'])
         /*
          * Sections per course instance
          */
-        Route::get('/course-instances/{courseInstance}/sections', [\App\Http\Controllers\SectionController::class, 'index']);
-        Route::post('/course-instances/{courseInstance}/sections', [\App\Http\Controllers\SectionController::class, 'store']);
-        Route::put('/sections/{section}', [\App\Http\Controllers\SectionController::class, 'update']);
-        Route::delete('/sections/{section}', [\App\Http\Controllers\SectionController::class, 'destroy']);
+        Route::get('/course-instances/{courseInstance}/sections', [SectionController::class, 'index']);
+        Route::post('/course-instances/{courseInstance}/sections', [SectionController::class, 'store']);
+        Route::put('/sections/{section}', [SectionController::class, 'update']);
+        Route::delete('/sections/{section}', [SectionController::class, 'destroy']);
 
         /*
          * Materials per section
@@ -164,55 +190,29 @@ Route::middleware(['auth:sanctum', 'role:superadmin,dosen'])
         /*
          * Assignments per section
          */
-        // List assignment di section
         Route::get('/sections/{section}/assignments', [AssignmentController::class, 'index']);
-
-        // Buat assignment di section
         Route::post('/sections/{section}/assignments', [AssignmentController::class, 'store']);
-
-        // Detail satu assignment
         Route::get('/assignments/{assignment}', [AssignmentController::class, 'show']);
-
-        // Update assignment
         Route::put('/assignments/{assignment}', [AssignmentController::class, 'update']);
-
-        // Hapus assignment
         Route::delete('/assignments/{assignment}', [AssignmentController::class, 'destroy']);
 
-         /*
+        /*
          * Quizzes per section
          */
-        // List quiz di section
         Route::get('/sections/{section}/quizzes', [QuizController::class, 'index']);
-
-        // Buat quiz di section
         Route::post('/sections/{section}/quizzes', [QuizController::class, 'store']);
-
-        // Detail satu quiz
         Route::get('/quizzes/{quiz}', [QuizController::class, 'show']);
-
-        // Update quiz
         Route::put('/quizzes/{quiz}', [QuizController::class, 'update']);
-
-        // Hapus quiz
         Route::delete('/quizzes/{quiz}', [QuizController::class, 'destroy']);
     });
 
-Route::middleware('auth:sanctum')->get('/materials/{material}/file-url', [MaterialController::class, 'fileUrl']);
-
 /*
 |--------------------------------------------------------------------------
-| SANCTUM TEST ROUTE (DEBUG)
+| MATERIAL FILE URL (ALL AUTHENTICATED ROLES)
 |--------------------------------------------------------------------------
 |
-| GET /api/sanctum-test
+| Endpoint untuk ambil URL file material (dipakai frontend untuk download).
 |
 */
 
-Route::middleware('auth:sanctum')->get('/sanctum-test', function (Request $request) {
-    return response()->json([
-        'ok' => true,
-        'message' => 'Sanctum protected route works.',
-        'user' => $request->user(),
-    ]);
-});
+Route::middleware('auth:sanctum')->get('/materials/{material}/file-url', [MaterialController::class, 'fileUrl']);
