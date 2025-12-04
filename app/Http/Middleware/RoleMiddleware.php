@@ -8,7 +8,15 @@ use Symfony\Component\HttpFoundation\Response;
 
 class RoleMiddleware
 {
-    public function handle(Request $request, Closure $next, string $role): Response
+    /**
+     * Handle an incoming request.
+     *
+     * Contoh penggunaan di route:
+     * - role:superadmin
+     * - role:dosen
+     * - role:superadmin,dosen
+     */
+    public function handle(Request $request, Closure $next, ...$roles): Response
     {
         $user = $request->user();
 
@@ -18,10 +26,16 @@ class RoleMiddleware
             ], 401);
         }
 
-        if ($user->role !== $role) {
+        // Kalau tidak ada role yang dikonfigurasi, langsung lolos saja
+        if (empty($roles)) {
+            return $next($request);
+        }
+
+        // Cek apakah role user ada di daftar roles yg diizinkan
+        if (! in_array($user->role, $roles, true)) {
             return response()->json([
                 'message' => 'Forbidden: role mismatch.',
-                'required_role' => $role,
+                'required_roles' => $roles,
                 'current_role' => $user->role,
             ], 403);
         }

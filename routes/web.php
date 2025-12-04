@@ -34,3 +34,4 @@ Route::get('/login', function () {
         'message' => 'Unauthenticated. Please login via the frontend application.',
     ], 401);
 })->name('login');
+    

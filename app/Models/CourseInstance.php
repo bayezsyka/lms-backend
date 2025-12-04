@@ -9,8 +9,6 @@ class CourseInstance extends Model
 {
     use HasFactory;
 
-    protected $table = 'course_instances';
-
     protected $fillable = [
         'course_template_id',
         'class_name',
@@ -23,12 +21,14 @@ class CourseInstance extends Model
     ];
 
     protected $casts = [
+        'course_template_id' => 'integer',
+        'lecturer_id' => 'integer',
         'start_date' => 'date',
         'end_date' => 'date',
     ];
 
     /**
-     * Template mata kuliah (master MK).
+     * Template mata kuliah (course_templates).
      */
     public function template()
     {
@@ -36,7 +36,7 @@ class CourseInstance extends Model
     }
 
     /**
-     * Dosen pengampu kelas ini.
+     * Dosen pengampu.
      */
     public function lecturer()
     {
@@ -44,7 +44,7 @@ class CourseInstance extends Model
     }
 
     /**
-     * Enrollment (keikutsertaan mahasiswa) untuk kelas ini.
+     * Enrollment (pivot mahasiswa di kelas ini).
      */
     public function enrollments()
     {
@@ -52,16 +52,22 @@ class CourseInstance extends Model
     }
 
     /**
-     * Mahasiswa yang ter-enroll di kelas ini.
-     *
-     * Catatan:
-     *  - Menggunakan tabel pivot "enrollments"
-     *  - Pivot menyimpan status & waktu enroll/drop
+     * Mahasiswa yang terdaftar di kelas ini.
      */
     public function students()
     {
         return $this->belongsToMany(User::class, 'enrollments', 'course_instance_id', 'student_id')
             ->withPivot(['status', 'enrolled_at', 'dropped_at'])
             ->withTimestamps();
+    }
+
+    /**
+     * Sections (minggu/topik perkuliahan) di dalam kelas ini.
+     * Default diurutkan berdasarkan kolom 'order'.
+     */
+    public function sections()
+    {
+        return $this->hasMany(Section::class)
+            ->orderBy('order');
     }
 }
