@@ -11,8 +11,12 @@ use Illuminate\Support\Str;
 class UserController extends Controller
 {
     /**
-     * List user dengan optional filter role.
-     * GET /api/admin/users?role=dosen
+     * List user dengan optional filter:
+     * - role
+     * - status
+     * - keyword (name / username / email)
+     *
+     * GET /api/admin/users?role=dosen&status=active&keyword=udin
      */
     public function index(Request $request)
     {
@@ -22,12 +26,26 @@ class UserController extends Controller
             $query->where('role', $request->query('role'));
         }
 
+        if ($request->filled('status')) {
+            $query->where('status', $request->query('status'));
+        }
+
+        if ($request->filled('keyword')) {
+            $keyword = $request->query('keyword');
+            $query->where(function ($q) use ($keyword) {
+                $q->where('name', 'like', '%' . $keyword . '%')
+                    ->orWhere('username', 'like', '%' . $keyword . '%')
+                    ->orWhere('email', 'like', '%' . $keyword . '%');
+            });
+        }
+
         $users = $query
             ->orderBy('name')
             ->get([
                 'id',
                 'name',
                 'username',
+                'nim',
                 'email',
                 'role',
                 'status',
@@ -50,8 +68,41 @@ class UserController extends Controller
     }
 
     /**
-     * Create user baru dengan password random.
+     * Helper: generate password berdasarkan nama.
+     *
+     * Pola:
+     *  - ambil 6 karakter pertama dari nama (huruf/angka, lower, tanpa spasi)
+     *  - tambah 3 karakter random (lowercase)
+     *
+     * Contoh:
+     *  nama: "Farros Baskyailakh" → base: "farros" → password: "farrosabc"
+     */
+    protected function generatePasswordFromName(string $name): string
+    {
+        // bersihkan jadi huruf/angka saja
+        $base = Str::of($name)
+            ->lower()
+            ->replaceMatches('/[^a-z0-9]/', '')
+            ->substr(0, 6)
+            ->__toString();
+
+        if ($base === '') {
+            // kalau namanya aneh (semua simbol), fallback random 6 char
+            $base = Str::lower(Str::random(6));
+        }
+
+        $suffix = Str::lower(Str::random(3));
+
+        return $base . $suffix;
+    }
+
+    /**
+     * Create user baru.
      * POST /api/admin/users
+     *
+     * - Kalau request mengirim "password" → pakai itu.
+     * - Kalau tidak mengirim "password" → generate dari nama:
+     *   (6 huruf pertama nama) + (3 char random).
      *
      * Return: user + plain password agar bisa dibagikan oleh admin.
      */
@@ -61,21 +112,26 @@ class UserController extends Controller
             'name' => ['required', 'string', 'max:100'],
             'username' => ['required', 'string', 'max:50', 'unique:users,username'],
             'email' => ['nullable', 'email', 'max:150', 'unique:users,email'],
+            'nim' => ['nullable', 'string', 'max:50', 'unique:users,nim'],
             'role' => ['required', 'in:superadmin,dosen,mahasiswa'],
             'status' => ['required', 'in:active,inactive'],
+            'password' => ['nullable', 'string', 'min:6'],
+            'force_password_change' => ['sometimes', 'boolean'],
         ]);
 
-        // Generate password random
-        $plainPassword = Str::random(10);
+        // Jika password dikirim dari frontend (misalnya via import Excel), pakai itu.
+        // Kalau tidak ada, generate berdasarkan nama.
+        $plainPassword = $data['password'] ?? $this->generatePasswordFromName($data['name']);
 
         $user = User::create([
             'name' => $data['name'],
             'username' => $data['username'],
+            'nim' => $data['nim'] ?? null,
             'email' => $data['email'] ?? null,
             'role' => $data['role'],
             'status' => $data['status'],
             'password' => Hash::make($plainPassword),
-            'force_password_change' => true,
+            'force_password_change' => $data['force_password_change'] ?? true,
         ]);
 
         return response()->json([
@@ -91,8 +147,10 @@ class UserController extends Controller
      * Bisa dipakai untuk:
      * - ubah name
      * - ubah username / email
+     * - ubah nim
      * - ubah role
      * - ubah status (active / inactive)
+     * - ubah force_password_change
      */
     public function update(Request $request, int $id)
     {
@@ -102,8 +160,10 @@ class UserController extends Controller
             'name' => ['sometimes', 'required', 'string', 'max:100'],
             'username' => ['sometimes', 'required', 'string', 'max:50', 'unique:users,username,' . $user->id],
             'email' => ['nullable', 'email', 'max:150', 'unique:users,email,' . $user->id],
+            'nim' => ['nullable', 'string', 'max:50', 'unique:users,nim,' . $user->id],
             'role' => ['sometimes', 'required', 'in:superadmin,dosen,mahasiswa'],
             'status' => ['sometimes', 'required', 'in:active,inactive'],
+            'force_password_change' => ['sometimes', 'boolean'],
         ]);
 
         $user->fill($data);
@@ -113,8 +173,11 @@ class UserController extends Controller
     }
 
     /**
-     * Reset password user menjadi password random baru.
+     * Reset password user menjadi password baru.
      * POST /api/admin/users/{id}/reset-password
+     *
+     * Pola password:
+     *  (6 huruf pertama nama) + (3 char random)
      *
      * Return: password baru (plaintext) agar admin bisa kirim ke user.
      */
@@ -122,7 +185,7 @@ class UserController extends Controller
     {
         $user = User::findOrFail($id);
 
-        $plainPassword = Str::random(10);
+        $plainPassword = $this->generatePasswordFromName($user->name);
 
         $user->password = Hash::make($plainPassword);
         $user->force_password_change = true;
@@ -135,7 +198,7 @@ class UserController extends Controller
     }
 
     /**
-     * Hapus user (opsional).
+     * Hapus user.
      * DELETE /api/admin/users/{id}
      */
     public function destroy(int $id)
