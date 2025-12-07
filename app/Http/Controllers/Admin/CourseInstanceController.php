@@ -18,9 +18,24 @@ class CourseInstanceController extends Controller
      */
     public function index(Request $request)
     {
-        // Versi sederhana dulu: tanpa filter, ambil semua kelas.
-        $instances = CourseInstance::with(['template', 'lecturer'])
-            ->orderBy('id', 'desc')
+        $query = CourseInstance::query()
+            ->with([
+                'template:id,code,name',
+                'lecturer:id,name,username',
+            ]);
+
+        if ($request->filled('semester')) {
+            $query->where('semester', $request->query('semester'));
+        }
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->query('status'));
+        }
+
+        $instances = $query
+            ->orderBy('semester')
+            ->orderBy('course_template_id')
+            ->orderBy('class_name')
             ->get();
 
         return response()->json($instances);
@@ -54,7 +69,7 @@ class CourseInstanceController extends Controller
             ], 422);
         }
 
-        // Pastikan lecturer adalah user dengan role "dosen"
+        // Pastikan lecturer adalah user dengan role dosen
         $lecturer = User::where('id', $data['lecturer_id'])
             ->where('role', 'dosen')
             ->first();
@@ -77,8 +92,6 @@ class CourseInstanceController extends Controller
             'notes' => $data['notes'] ?? null,
         ]);
 
-        // PLACEHOLDER: copy struktur default dari template kalau nanti dibutuhkan.
-
         // Muat relasi untuk response
         $instance->load(['template', 'lecturer']);
 
@@ -92,13 +105,16 @@ class CourseInstanceController extends Controller
      */
     public function show(int $id)
     {
-        $instance = CourseInstance::with(['template', 'lecturer'])->findOrFail($id);
+        $instance = CourseInstance::with([
+            'template:id,code,name',
+            'lecturer:id,name,username',
+        ])->findOrFail($id);
 
         return response()->json($instance);
     }
 
     /**
-     * Update informasi umum kelas (tanpa mengatur flow status).
+     * Update informasi kelas (tanpa ubah status).
      *
      * PUT /api/admin/course-instances/{id}
      */
@@ -107,9 +123,10 @@ class CourseInstanceController extends Controller
         $instance = CourseInstance::findOrFail($id);
 
         $data = $request->validate([
-            'class_name' => ['sometimes', 'required', 'string', 'max:50'],
-            'semester' => ['sometimes', 'required', 'string', 'max:50'],
-            'lecturer_id' => ['sometimes', 'required', 'integer', 'exists:users,id'],
+            'course_template_id' => ['sometimes', 'integer', 'exists:course_templates,id'],
+            'class_name' => ['sometimes', 'string', 'max:50'],
+            'semester' => ['sometimes', 'string', 'max:50'],
+            'lecturer_id' => ['sometimes', 'integer', 'exists:users,id'],
             'start_date' => ['nullable', 'date'],
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
             'notes' => ['nullable', 'string'],
@@ -150,6 +167,21 @@ class CourseInstanceController extends Controller
             $instance->notes = $data['notes'];
         }
 
+        // Kalau mau ubah template, pastikan template tersebut aktif
+        if (array_key_exists('course_template_id', $data)) {
+            $template = CourseTemplate::where('id', $data['course_template_id'])
+                ->where('is_active', true)
+                ->first();
+
+            if (! $template) {
+                return response()->json([
+                    'message' => 'Template mata kuliah tidak ditemukan atau tidak aktif.',
+                ], 422);
+            }
+
+            $instance->course_template_id = $template->id;
+        }
+
         $instance->save();
 
         $instance->load(['template', 'lecturer']);
@@ -158,7 +190,7 @@ class CourseInstanceController extends Controller
     }
 
     /**
-     * Ubah status kelas (draft → active → finished).
+     * Update status kelas (draft / active / finished).
      *
      * POST /api/admin/course-instances/{id}/status
      */
@@ -170,36 +202,29 @@ class CourseInstanceController extends Controller
             'status' => ['required', 'in:draft,active,finished'],
         ]);
 
-        $current = $instance->status;
-        $next = $data['status'];
-
-        // Jika status tidak berubah, langsung return
-        if ($current === $next) {
-            $instance->load(['template', 'lecturer']);
-
-            return response()->json($instance);
-        }
-
-        $allowedTransitions = [
-            'draft' => ['active', 'finished'],
-            'active' => ['finished'],
-            'finished' => [], // tidak boleh diubah lagi
-        ];
-
-        $allowedNext = $allowedTransitions[$current] ?? [];
-
-        if (! in_array($next, $allowedNext, true)) {
-            return response()->json([
-                'message' => "Perubahan status dari '{$current}' ke '{$next}' tidak diizinkan.",
-            ], 422);
-        }
-
-        $instance->status = $next;
+        $instance->status = $data['status'];
         $instance->save();
 
-        $instance->load(['template', 'lecturer']);
+        return response()->json([
+            'message' => 'Status kelas berhasil diubah.',
+            'status' => $instance->status,
+        ]);
+    }
 
-        return response()->json($instance);
+    /**
+     * Hapus class instance.
+     *
+     * DELETE /api/admin/course-instances/{id}
+     */
+    public function destroy(int $id)
+    {
+        $instance = CourseInstance::findOrFail($id);
+
+        $instance->delete();
+
+        return response()->json([
+            'message' => 'Kelas berhasil dihapus.',
+        ]);
     }
 
     /**
@@ -209,14 +234,22 @@ class CourseInstanceController extends Controller
      */
     public function students(int $id)
     {
+        // Ambil info kelas + relasi utama
         $instance = CourseInstance::with([
             'template:id,code,name',
             'lecturer:id,name,username',
-            'enrollments.student:id,name,username,nim,email,role,status',
         ])->findOrFail($id);
 
-        // Susun response yang rapi
-        $students = $instance->enrollments->map(function (Enrollment $enrollment) {
+        // Ambil SEMUA enrollment (active + dropped) secara eksplisit,
+        // supaya yang sudah di-drop tetap muncul di UI dengan status berbeda.
+        $enrollments = Enrollment::with([
+            'student:id,name,username,nim,email,role,status',
+        ])
+            ->where('course_instance_id', $instance->id)
+            ->orderBy('id')
+            ->get();
+
+        $students = $enrollments->map(function (Enrollment $enrollment) {
             return [
                 'enrollment_id' => $enrollment->id,
                 'status' => $enrollment->status,
@@ -235,16 +268,20 @@ class CourseInstanceController extends Controller
         });
 
         return response()->json([
-            'course' => [
+            'class' => [
                 'id' => $instance->id,
+                'course_template_id' => $instance->course_template_id,
                 'class_name' => $instance->class_name,
                 'semester' => $instance->semester,
                 'status' => $instance->status,
-                'template' => [
+                'start_date' => $instance->start_date,
+                'end_date' => $instance->end_date,
+                'notes' => $instance->notes,
+                'template' => $instance->template ? [
                     'id' => $instance->template->id,
                     'code' => $instance->template->code,
                     'name' => $instance->template->name,
-                ],
+                ] : null,
                 'lecturer' => $instance->lecturer ? [
                     'id' => $instance->lecturer->id,
                     'name' => $instance->lecturer->name,
@@ -256,13 +293,9 @@ class CourseInstanceController extends Controller
     }
 
     /**
-     * Tambah mahasiswa ke kelas (by user_id atau NIM).
+     * Tambah mahasiswa ke kelas (by user_id atau NIM / username).
      *
      * POST /api/admin/course-instances/{id}/students
-     *
-     * Body bisa salah satu:
-     *  - { "student_id": 10 }
-     *  - { "nim": "221234567" }
      */
     public function addStudent(Request $request, int $id)
     {
@@ -275,46 +308,45 @@ class CourseInstanceController extends Controller
 
         if (! isset($data['student_id']) && ! isset($data['nim'])) {
             return response()->json([
-                'message' => 'Harus mengirim salah satu: student_id atau nim.',
+                'message' => 'Harus mengirimkan student_id atau nim.',
             ], 422);
         }
 
-        // Cari user mahasiswa
+        // Cari mahasiswa
         if (isset($data['student_id'])) {
-            $studentQuery = User::where('id', $data['student_id']);
+            $student = User::where('id', $data['student_id'])
+                ->where('role', 'mahasiswa')
+                ->first();
         } else {
-            $studentQuery = User::where('nim', $data['nim']);
-        }
+            // "nim" di sini artinya NIM ATAU username
+            $identifier = $data['nim'];
 
-        $student = $studentQuery
-            ->where('role', 'mahasiswa')
-            ->where('status', 'active')
-            ->first();
+            $student = User::where('role', 'mahasiswa')
+                ->where(function ($q) use ($identifier) {
+                    $q->where('nim', $identifier)
+                        ->orWhere('username', $identifier);
+                })
+                ->first();
+        }
 
         if (! $student) {
             return response()->json([
-                'message' => 'Mahasiswa tidak ditemukan, bukan role "mahasiswa", atau status user tidak aktif.',
-            ], 422);
+                'message' => 'Mahasiswa tidak ditemukan.',
+            ], 404);
         }
 
-        // Cek apakah sudah pernah enroll sebelumnya
+        // Pastikan belum ada enrollment aktif di kelas ini
         $enrollment = Enrollment::where('course_instance_id', $instance->id)
             ->where('student_id', $student->id)
             ->first();
 
-        if ($enrollment) {
-            if ($enrollment->status === 'active') {
-                return response()->json([
-                    'message' => 'Mahasiswa sudah ter-enroll di kelas ini.',
-                ], 409);
-            }
+        if ($enrollment && $enrollment->status === 'active') {
+            return response()->json([
+                'message' => 'Mahasiswa sudah terdaftar aktif di kelas ini.',
+            ], 422);
+        }
 
-            // Jika sebelumnya dropped, aktifkan kembali
-            $enrollment->status = 'active';
-            $enrollment->enrolled_at = now();
-            $enrollment->dropped_at = null;
-            $enrollment->save();
-        } else {
+        if (! $enrollment) {
             // Buat enrollment baru
             $enrollment = Enrollment::create([
                 'course_instance_id' => $instance->id,
@@ -322,6 +354,11 @@ class CourseInstanceController extends Controller
                 'status' => 'active',
                 'enrolled_at' => now(),
             ]);
+        } else {
+            // Jika sebelumnya dropped, aktifkan lagi
+            $enrollment->status = 'active';
+            $enrollment->dropped_at = null;
+            $enrollment->save();
         }
 
         $enrollment->load('student');
@@ -329,7 +366,7 @@ class CourseInstanceController extends Controller
         return response()->json([
             'message' => 'Mahasiswa berhasil ditambahkan ke kelas.',
             'enrollment' => [
-                'id' => $enrollment->id,
+                'enrollment_id' => $enrollment->id,
                 'status' => $enrollment->status,
                 'enrolled_at' => $enrollment->enrolled_at,
                 'dropped_at' => $enrollment->dropped_at,
@@ -347,12 +384,9 @@ class CourseInstanceController extends Controller
     }
 
     /**
-     * Drop mahasiswa dari kelas.
+     * Hapus / drop mahasiswa dari kelas.
      *
      * DELETE /api/admin/course-instances/{id}/students/{studentId}
-     *
-     * Catatan:
-     *  - Kita tidak menghapus row enrollment, hanya set status = dropped dan isi dropped_at.
      */
     public function removeStudent(int $id, int $studentId)
     {
@@ -364,12 +398,11 @@ class CourseInstanceController extends Controller
 
         if (! $enrollment) {
             return response()->json([
-                'message' => 'Enrollment mahasiswa di kelas ini tidak ditemukan.',
+                'message' => 'Mahasiswa tidak ditemukan di kelas ini.',
             ], 404);
         }
 
         if ($enrollment->status === 'dropped') {
-            // Sudah dropped, tidak perlu apa-apa
             return response()->json([
                 'message' => 'Mahasiswa sudah berstatus dropped di kelas ini.',
             ], 200);
