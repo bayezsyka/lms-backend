@@ -9,7 +9,7 @@ return [
     'allowed_origins' => [
         'http://localhost:3000',
         'http://127.0.0.1:8000',
-        'https://lms-sangkolo.vercel.app', // ganti dengan domain Next.js kalau sudah ada
+        'https://lms-sangkolo.vercel.app'
     ],
 
     'allowed_origins_patterns' => [],
